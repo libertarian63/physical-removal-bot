@@ -39,7 +39,6 @@ class UserVerificationService(client: RequestHandler[Future])(implicit ec: Execu
 
   def disapprove(chatId: ChatId, user: User): Unit = {
     unverifiedUsers(chatId, user).cancel(false)
-    unverifiedUsers.remove(chatId, user)
     deleteUser(chatId, user).run()
   }
   
@@ -50,6 +49,7 @@ class UserVerificationService(client: RequestHandler[Future])(implicit ec: Execu
   }
   
   private def deleteUser(chatId: ChatId, user: User): Runnable = () => {
+    unverifiedUsers.remove(chatId, user)
     client(KickChatMember(chatId = chatId, userId = user.id)) onComplete {
       case Failure(ex) => logger.error(
         s"""Error while deleting ${user.username}[${user.id}] from $chatId
