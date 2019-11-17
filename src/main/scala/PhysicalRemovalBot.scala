@@ -1,3 +1,4 @@
+import cats.implicits._
 import com.bot4s.telegram.api.RequestHandler
 import com.bot4s.telegram.api.declarative.Callbacks
 import com.bot4s.telegram.api.declarative.Commands
@@ -8,6 +9,7 @@ import com.bot4s.telegram.future.TelegramBot
 import com.bot4s.telegram.methods.EditMessageReplyMarkup
 import com.bot4s.telegram.models.InlineKeyboardButton
 import com.bot4s.telegram.models.InlineKeyboardMarkup
+import com.bot4s.telegram.models.Message
 import com.softwaremill.sttp.SttpBackend
 import com.softwaremill.sttp.okhttp.OkHttpFutureBackend
 
@@ -23,27 +25,31 @@ class PhysicalRemovalBot(val token: String) extends TelegramBot
     override val client: RequestHandler[Future] = new FutureSttpClient(token)
     val userRemovalService = new UserVerificationService(client)
 
+    def newChatUsers(implicit msg: Message) = msg.newChatMembers.toList.flatten
+
     onMessage { implicit msg =>
-      msg.newChatMembers.toList.flatten.filter(_.isBot) map { newUser =>
+      val answers: List[Future[Message]] = newChatUsers.filter(!_.isBot) map { newUser =>
         userRemovalService += (msg.chat.id, newUser)
         reply(
           s"""
-             |Стой, $newUser!
+             |Стой, ${newUser.username.get}!
              |Если хочешь продолжить жить, то ответь на вопрос. Иначе тебе грозит физическое удаление из чата!
              |Сколько у человека пальцев на одной руке?
              |""".stripMargin, replyMarkup = Some(markupSwitcher(msg.from.get.id)))
       }
 
-      unit
+      answers.foldRight(unit)(_ *> _)
     }
 
     onMessage { implicit msg =>
-      msg.from.filter(userRemovalService.contains(msg.chat.id, _)) foreach  { user =>
+      val answers: Unit = msg.from.filter { case user =>
+        userRemovalService.contains(msg.chat.id, user) && !newChatUsers.contains(user)
+      } foreach { user =>
         userRemovalService.disapprove(msg.chat.id, user)
-        reply(s"Нам придётся прокатиться на вертолёте, ${user.username}!")
+        reply(s"Нам придётся прокатиться на вертолёте, ${user.username.get}!")
       }
 
-      unit
+      answers.pure[Future]
     }
 
     val TAG = "ANSWER"
@@ -61,20 +67,19 @@ class PhysicalRemovalBot(val token: String) extends TelegramBot
     }
 
     onCallbackWithTag(TAG) { implicit cbq =>
-      val answer = for {
-        data <- cbq.data if data == s"T${cbq.from.id}"
+      val answer: Option[String] = for {
+        data <- cbq.data if data === s"T${cbq.from.id}"
         msg <- cbq.message
         chatId = msg.chat.id
       } yield {
+        logger.debug(s"Data: $data")
         userRemovalService.approve(chatId, cbq.from)
-        request(EditMessageReplyMarkup(Some(msg.source), // msg.chat.id
-          Some(msg.messageId), replyMarkup = Some(InlineKeyboardMarkup(Seq.empty))))
+        request(EditMessageReplyMarkup(Some(msg.source), Some(msg.messageId), replyMarkup = Some(InlineKeyboardMarkup(Seq.empty))))
         """
           |Ты отлично справился! Добро пожаловать в самарскую комунну, с её правилами можешь ознакомиться в описании чата.
         """.stripMargin
       }
-      ackCallback(answer)
 
-      unit
+      ackCallback(answer).void
     }
 }
