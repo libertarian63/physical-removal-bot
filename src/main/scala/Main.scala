@@ -36,5 +36,5 @@ object Main extends CommandApp(
   }
 ) {
   LoggerConfig.factory = PrintLoggerFactory()
-  LoggerConfig.level = LogLevel.TRACE
+  LoggerConfig.level = LogLevel.DEBUG
 }
